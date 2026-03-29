@@ -1,4 +1,5 @@
 use std::io::{stdout, Write};
+use crossterm::event::KeyEventKind;
 use crossterm::{
     cursor::MoveTo,
     event::{self, Event, KeyCode},
@@ -10,7 +11,7 @@ use rand::Rng;
 
 const MAP_W: usize = 200;
 const MAP_H: usize = 200;
-const VIEW_W: usize = 60;
+const VIEW_W: usize = 120;
 const VIEW_H: usize = 24;
 
 const IRON_CHANCE: u32 = 2;
@@ -47,7 +48,7 @@ fn ore_sprite(ore: char) -> &'static [&'static str] {
     }
 }
 
-fn draw_sprite(out: &mut impl Write, sprite: &[&str], sx: i32, sy: i32) {
+fn stamp_sprite(buffer: &mut Vec<Vec<char>>, sprite: &[&str], sx: i32, sy: i32) {
     for (row_i, line) in sprite.iter().enumerate() {
         let ry = sy + row_i as i32;
         if ry < 0 || ry >= VIEW_H as i32 { continue; }
@@ -57,7 +58,7 @@ fn draw_sprite(out: &mut impl Write, sprite: &[&str], sx: i32, sy: i32) {
             let rx = sx + col_i as i32;
             if rx < 0 || rx >= VIEW_W as i32 { continue; }
 
-            execute!(out, MoveTo(rx as u16, ry as u16), Print(ch)).unwrap();
+            buffer[ry as usize][rx as usize] = ch;
         }
     }
 }
@@ -72,11 +73,11 @@ fn main() {
 
     for y in 0..MAP_H {
         for x in 0..MAP_W {
-            let roll = rng.gen_range(0..100);
+            let roll = rng.gen_range(0..1000);
             map[y][x] = match roll {
-                r if r < IRON_CHANCE                                   => 'i',
-                r if r < IRON_CHANCE + COPPER_CHANCE                   => 'c',
-                r if r < IRON_CHANCE + COPPER_CHANCE + COAL_CHANCE     => 'k',
+                r if r < IRON_CHANCE                               => 'i',
+                r if r < IRON_CHANCE + COPPER_CHANCE               => 'c',
+                r if r < IRON_CHANCE + COPPER_CHANCE + COAL_CHANCE => 'k',
                 _ => ' ',
             };
         }
@@ -89,48 +90,49 @@ fn main() {
         let cam_x = px - VIEW_W as i32 / 2;
         let cam_y = py - VIEW_H as i32 / 2;
 
-        for vy in 0..VIEW_H {
-            for vx in 0..VIEW_W {
-                execute!(out, MoveTo(vx as u16, vy as u16), Print(' ')).unwrap();
-            }
-        }
+        let mut buffer = vec![vec![' '; VIEW_W]; VIEW_H];
 
         for vy in 0..VIEW_H {
             for vx in 0..VIEW_W {
                 let mx = cam_x + vx as i32;
                 let my = cam_y + vy as i32;
-
-                if mx < 0 || my < 0 || mx >= MAP_W as i32 || my >= MAP_H as i32 {
-                    continue;
-                }
+                if mx < 0 || my < 0 || mx >= MAP_W as i32 || my >= MAP_H as i32 { continue; }
 
                 let tile = map[my as usize][mx as usize];
                 if tile == ' ' { continue; }
 
-                let sprite = ore_sprite(tile);
-                draw_sprite(&mut out, sprite, vx as i32, vy as i32);
+                stamp_sprite(&mut buffer, ore_sprite(tile), vx as i32, vy as i32);
             }
         }
 
-        let center_x = VIEW_W as i32 / 2 - 1;
-        let center_y = VIEW_H as i32 / 2 - 1;
-        draw_sprite(&mut out, &SPRITE_PLAYER, center_x, center_y);
+        // Записываем игрока поверх
+        let cx = VIEW_W as i32 / 2 - 1;
+        let cy = VIEW_H as i32 / 2 - 1;
+        stamp_sprite(&mut buffer, &SPRITE_PLAYER, cx, cy);
 
+        for (vy, row) in buffer.iter().enumerate() {
+            let line: String = row.iter().collect();
+            execute!(out, MoveTo(0, vy as u16), Print(&line)).unwrap();
+        }
+
+        // HUD
         execute!(out, MoveTo(0, VIEW_H as u16), Print(format!(
-            "Pos: ({}, {}) WASD=движение Q=выход",
+            "Pos: ({}, {})  i=железо c=медь k=уголь  WASD=движение Q=выход",
             px, py
         ))).unwrap();
 
         out.flush().unwrap();
 
         if let Ok(Event::Key(key)) = event::read() {
-            match key.code {
-                KeyCode::Char('w') => py -= 1,
-                KeyCode::Char('s') => py += 1,
-                KeyCode::Char('a') => px -= 1,
-                KeyCode::Char('d') => px += 1,
-                KeyCode::Char('q') => break,
-                _ => {}
+            if key.kind == KeyEventKind::Press {
+                match key.code {
+                    KeyCode::Char('w') => py -= 1,
+                    KeyCode::Char('s') => py += 1,
+                    KeyCode::Char('a') => px -= 2,
+                    KeyCode::Char('d') => px += 2,
+                    KeyCode::Char('q') => break,
+                    _ => {}
+                }
             }
         }
     }
